@@ -29,10 +29,15 @@ esac
 
 CACHEBUST="cb=$(date +%s)$$"
 TARGET="${BASE}?${CACHEBUST}"
-RAW="$(mktemp 2>/dev/null || echo "./live-legal-$$.raw")"
-BODY="${RAW}.body"
-ERR="${RAW}.err"
-trap 'rm -f "$RAW" "$BODY" "$ERR"' EXIT
+BODY="$(mktemp 2>/dev/null || echo "./live-legal-$$.html")"
+ERR="${BODY}.err"
+trap 'rm -f "$BODY" "$ERR"' EXIT
+# Native curl on this dev box (Git-Bash/MSYS) does not understand /c/... paths
+# that mktemp hands out, so hand it a native path there. Runners are Linux.
+BODY_ARG="$BODY"
+case "$(uname -s 2>/dev/null)" in
+  MINGW*|MSYS*|CYGWIN*) command -v cygpath >/dev/null 2>&1 && BODY_ARG="$(cygpath -w "$BODY")" ;;
+esac
 MIN_BYTES=4000
 
 fails=0
@@ -43,13 +48,12 @@ echo "== live-legal-monitor ========================================"
 echo "base:       $BASE"
 echo "requesting: $TARGET"
 
-curl -sS -L --max-time 30 -A 'the-bill-legal-monitor/1' -w '\n%{http_code}' "$TARGET" >"$RAW" 2>"$ERR"
+code=$(curl -sS -L --max-time 30 -A 'the-bill-legal-monitor/1' -o "$BODY_ARG" -w '%{http_code}' "$TARGET" 2>"$ERR")
 curl_rc=$?
 if [ "$curl_rc" -ne 0 ]; then
   echo "curl stderr: $(cat "$ERR" 2>/dev/null)"
 fi
-code=$(tail -n 1 "$RAW" | tr -d ' \r\n')
-sed '$d' "$RAW" > "$BODY" 2>/dev/null || : > "$BODY"
+[ -f "$BODY" ] || : > "$BODY"
 
 bytes=$(wc -c < "$BODY" 2>/dev/null | tr -d ' \r\n')
 [ -n "${bytes:-}" ] || bytes=0
