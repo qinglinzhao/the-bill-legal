@@ -1,0 +1,43 @@
+name: legal-guard
+
+# Regression gate for the published legal pages of this GitHub Pages site.
+# It never rewrites content — it only fails the build when the pages regress:
+#   R1  a placeholder token ships (e.g. [CONTACT EMAIL], TODO, lorem)
+#   R2  a local machine path leaks into the public site (D:\, C:\Users, /d/Hermes, ...)
+#   R3  one of the four required legal sections disappears
+#       (Privacy / EULA-or-Terms / Refund / Support Email)
+# Every hit is reported as file:line in the job log and as a GitHub annotation.
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: legal-guard-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  guard:
+    name: legal-guard
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show scanned files
+        run: |
+          git ls-files '*.html' | sed 's/^/  /'
+
+      - name: Run legal-guard checks
+        run: |
+          set -uo pipefail
+          mapfile -t FILES < <(git ls-files '*.html')
+          if [ "${#FILES[@]}" -eq 0 ]; then
+            echo "::error::no tracked .html files found — refusing to report a pass"
+            exit 1
+          fi
+          bash scripts/check-legal-page.sh "${FILES[@]}"
