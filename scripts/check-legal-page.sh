@@ -58,6 +58,14 @@ for f in "${FILES[@]}"; do
   [ -f "$f" ] || { echo "::error file=$f::scanned file does not exist"; exit 1; }
 done
 
+# The page that must carry the legal sections (index.html preferred).
+PRIMARY="${FILES[0]}"
+for f in "${FILES[@]}"; do
+  case "$f" in
+    index.html|*/index.html) PRIMARY="$f" ;;
+  esac
+done
+
 echo
 echo "-- R1 placeholder tokens (fixed strings) ---------------------"
 scan R1-placeholder -F \
@@ -89,8 +97,9 @@ check_section() {
   local hit
   hit=$(grep -n -i -E "$re" -- "${FILES[@]}" 2>/dev/null | head -n 1 || true)
   if [ -z "$hit" ]; then
-    # Report against the primary target so the annotation lands on a real file.
-    emit "${FILES[0]}" 0 "R3-missing-$id" "required section not found: $label"
+    # Attribute the annotation to the primary legal page so it points at the
+    # page that must carry the section, not at whatever sorts first.
+    emit "$PRIMARY" 0 "R3-missing-$id" "required section not found: $label"
   else
     local f=${hit%%:*}; local rest=${hit#*:}; local n=${rest%%:*}
     printf 'OK  %s:%s  (%s)\n' "$f" "$n" "$label"
