@@ -1,0 +1,79 @@
+name: live-legal-monitor
+
+# Daily probe of the PUBLISHED legal page (https://qinglinzhao.github.io/the-bill-legal/).
+#
+# Why a second gate: legal-guard checks the source tree on every push/PR, but it
+# cannot see what Pages actually serves. This monitor fetches the live URL and
+# fails the run when production regresses: wrong/absent page, missing anchor,
+# placeholder junk, truncated deploy.
+#
+# Manual dispatch also accepts target=local: it serves the checked-out ref from
+# the runner on localhost and runs the exact same assertions against it. That is
+# how the monitor itself is red-proofed without taking the public legal page down.
+#
+# Note: there is deliberately no push/pull_request trigger. This job must never
+# race the Pages deploy; run history is schedule + manual dispatch only.
+
+on:
+  schedule:
+    - cron: '17 3 * * *'   # 03:17 UTC = 11:17 Asia/Shanghai, once daily
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'live = published site; local = serve the checked-out ref on localhost (red-proof)'
+        type: choice
+        options:
+          - live
+          - local
+        default: live
+
+permissions:
+  contents: read
+
+concurrency:
+  group: live-legal-monitor-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    name: live-legal-monitor
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+
+      - name: Probe legal page
+        env:
+          TARGET_MODE: ${{ inputs.target }}
+        run: |
+          set -uo pipefail
+          BASE="https://qinglinzhao.github.io/the-bill-legal/"
+          MODE="${TARGET_MODE:-live}"
+          SRV_PID=""
+          echo "mode: $MODE  ref: $GITHUB_REF  sha: $GITHUB_SHA"
+
+          if [ "$MODE" = "local" ]; then
+            python3 -m http.server 8137 --bind 127.0.0.1 >/tmp/httpd.log 2>&1 &
+            SRV_PID=$!
+            ready=0
+            for _ in $(seq 1 30); do
+              if curl -fsS -o /dev/null "http://127.0.0.1:8137/index.html"; then ready=1; break; fi
+              sleep 1
+            done
+            if [ "$ready" -ne 1 ]; then
+              echo "::error title=live-legal-monitor::local http server did not start"
+              cat /tmp/httpd.log || true
+              exit 1
+            fi
+            BASE="http://127.0.0.1:8137/"
+            echo "serving local checkout: $(git rev-parse --short HEAD)"
+          fi
+
+          rc=0
+          bash scripts/check-live-legal.sh "$BASE" || rc=$?
+
+          if [ -n "$SRV_PID" ]; then kill "$SRV_PID" 2>/dev/null || true; fi
+          exit "$rc"
